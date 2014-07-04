@@ -27,34 +27,40 @@
 #
 # For more information, please refer to <http://unlicense.org/>
 
-if [ "$#" -lt 1 ]
+if [ "$#" -lt 3 ]
 then
 	echo
-	echo "Usage: $0 ADDRESS_FILE [SMI_PATH]"
+	echo "Usage: $0 SMI_PATH OUTPUT_DIR IP_ADDRESS "
 	echo
-	echo -e "\tADDRESS_FILE must contain line-separated IP addresses."
 	echo -e "\tSMI_PATH must be a numeric SMI path, e.g., 1.3.6.1.2.1.1."
+	echo -e "\tOUTPUT_DIR is where the data is written to."
+	echo -e "\tIP_ADDRESS must contain an IP address."
 	echo
 	exit 1
 fi
 
-address_file="$1"
-output_dir="$(mktemp -d '/tmp/kraken-XXXXXX')"
+smi_path="$1"
+output_dir="$2"
+ip_addr="$3"
 
-echo "[+] Writing all data to ${output_dir}/."
+output_file="${output_dir}/${ip_addr}_snmp_smi:${smi_path}"
 
-# Pull the entire MIB if no SMI path is given.  That might take a while.
+echo "[+] Now pulling SMI path ${smi_path} from address ${ip_addr}."
 
-if [ ! -z "$2" ]
+# Capture all SNMP traffic for later analysis.
+
+tcpdump -i any -n "host ${ip_addr} and port 161" -w "${output_file}.pcap" &
+pid=$!
+
+snmpwalk -v 1 -t 5 -r 10 -c "public" "$ip_addr" "$smi_path" \
+	> "${output_file}.txt" 2> "${output_file}_err.txt"
+
+# Now terminate tcpdump(8).
+
+if [ ! -z "$pid" ]
 then
-	smi_path="$2"
-else
-	smi_path="."
+	kill "$pid"
+	echo "[+] Sent SIGTERM to PID ${pid}."
 fi
 
-# Use xargs(1) as a process pool to parallelise execution.
-
-cat "$address_file" | xargs -L 1 --max-procs 10 ./pull_data.sh \
-	"$smi_path" "$output_dir"
-
-echo "[+] Wrote all data to ${output_dir}/."
+echo "[+] Done pulling SMI path from ${ip_addr}."
